@@ -28,6 +28,7 @@ __all__ = [
     "MoneyTypeError",
     "Probability",
     "Usd",
+    "capital_at_risk",
     "cents_to_probability",
     "notional",
     "probability_to_cents",
@@ -275,6 +276,18 @@ def notional(price: Probability, quantity: int) -> Usd:
     if quantity < 0:
         raise ValueError(f"notional() quantity must be non-negative, got {quantity}")
     return Usd(price.value * quantity)
+
+
+def capital_at_risk(price: Probability, quantity: int, *, is_short: bool) -> Usd:
+    """Maximum loss on a position — the only correct input to an exposure limit.
+
+    Long and short are not symmetric on a $1-settling binary contract. A contract
+    bought at p costs p and can lose p. A contract *sold* at p collects p and can lose
+    (1 - p), because settlement pays the holder $1 and we owe it. Sizing a short off its
+    proceeds understates the risk by (1-p)/p — a 9x understatement on a 10-cent short,
+    which is exactly the leg of the book where a strategy is most tempted to sell.
+    """
+    return notional(price.complement() if is_short else price, quantity)
 
 
 def cents_to_probability(cents: int) -> Probability:

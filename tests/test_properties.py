@@ -24,7 +24,7 @@ from pmx.core.models import (
     Signal,
     Venue,
 )
-from pmx.core.money import Probability, Usd, notional
+from pmx.core.money import Probability, Usd, capital_at_risk
 from pmx.risk.engine import DecisionOutcome, RiskEngine
 from pmx.risk.limits import Limit
 from pmx.risk.sizing import kelly_fraction_for, size_position
@@ -173,7 +173,9 @@ class TestNoOrderEverExceedsALimit:
 
         order = decision.order
         assert order is not None
-        cost = notional(order.limit_price, order.quantity)
+        cost = capital_at_risk(
+            order.limit_price, order.quantity, is_short=order.side is Side.SELL
+        )
 
         # Every limit, re-checked independently of the engine's own arithmetic.
         assert deployed_outcome + cost <= config.max_position_size
@@ -229,7 +231,9 @@ class TestNoOrderEverExceedsALimit:
         assert order is not None
         gross = Usd(signal.raw_edge() * order.quantity)
         fee = fee_model.estimate(order.limit_price, order.quantity, is_maker=False)
-        cost = notional(order.limit_price, order.quantity)
+        cost = capital_at_risk(
+            order.limit_price, order.quantity, is_short=order.side is Side.SELL
+        )
         net_bps = (gross - fee).ratio_to(cost) * Decimal(10_000)
         assert net_bps >= config.min_edge_bps_after_fees
 
@@ -300,7 +304,7 @@ class TestKellyProperties:
             max_position_pct_of_bankroll=cap_pct,
             signal_max_quantity=10_000,
         )
-        stake = notional(price, sizing.quantity)
+        stake = capital_at_risk(price, sizing.quantity, is_short=False)
         assert sizing.quantity <= 10_000
         assert stake <= Usd("1000")
         if equity > Usd.zero():

@@ -16,7 +16,7 @@ from decimal import ROUND_FLOOR, Decimal
 from pydantic import BaseModel, ConfigDict
 
 from pmx.core.models import Side
-from pmx.core.money import Probability, Usd, notional
+from pmx.core.money import Probability, Usd, capital_at_risk
 
 __all__ = ["Sizing", "kelly_fraction_for", "size_position"]
 
@@ -78,7 +78,8 @@ def size_position(
     """
     full_kelly = kelly_fraction_for(thesis, price, side)
 
-    if full_kelly <= 0 or price.value <= 0 or bankroll <= Usd.zero():
+    committed_per_contract = price.value if side is Side.BUY else Decimal(1) - price.value
+    if full_kelly <= 0 or committed_per_contract <= 0 or bankroll <= Usd.zero():
         return Sizing(
             kelly_raw_quantity=0,
             quantity=0,
@@ -87,8 +88,10 @@ def size_position(
             stake=Usd.zero(),
         )
 
-    # Cost per contract is the price itself (a contract at p costs $p and can lose $p).
-    cost_per_contract = price.value
+    # Capital committed per contract. A long at p risks p; a short at p risks (1 - p),
+    # because settlement pays the holder $1 and we owe it. Dividing a stake by the
+    # proceeds instead of the risk would oversize every short by (1-p)/p.
+    cost_per_contract = price.value if side is Side.BUY else Decimal(1) - price.value
 
     def contracts_for(stake: Usd) -> int:
         return int((stake.amount / cost_per_contract).to_integral_value(rounding=ROUND_FLOOR))
@@ -113,5 +116,5 @@ def size_position(
         quantity=max(quantity, 0),
         binding_constraint=binding,
         kelly_fraction=full_kelly,
-        stake=notional(price, max(quantity, 0)),
+        stake=capital_at_risk(price, max(quantity, 0), is_short=side is Side.SELL),
     )

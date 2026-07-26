@@ -42,7 +42,7 @@ from pmx.core.models import (
     Signal,
     TimeInForce,
 )
-from pmx.core.money import Probability, Usd, notional
+from pmx.core.money import Probability, Usd, capital_at_risk
 from pmx.risk.circuit import kill_switch_engaged
 from pmx.risk.limits import Limit, Rejection, RiskConfig
 from pmx.risk.sizing import size_position
@@ -429,7 +429,8 @@ class RiskEngine:
         quantity = min(quantity, max_from_book)
 
         # --- 14. Capital limits, evaluated on the *post-trade* position -------
-        new_notional = notional(signal.limit_price, quantity)
+        is_short = signal.side is Side.SELL
+        new_notional = capital_at_risk(signal.limit_price, quantity, is_short=is_short)
 
         checks: list[tuple[bool, Limit, str, dict[str, object]]] = []
 
@@ -556,7 +557,7 @@ class RiskEngine:
         fee = fee_model.estimate(signal.limit_price, quantity, is_maker=is_maker)
         gross_edge = Usd(signal.raw_edge() * quantity)
         net_edge = gross_edge - fee
-        cost = notional(signal.limit_price, quantity)
+        cost = new_notional
         net_edge_bps = net_edge.ratio_to(cost) * BPS if cost > Usd.zero() else Decimal(0)
 
         if net_edge_bps < config.min_edge_bps_after_fees:

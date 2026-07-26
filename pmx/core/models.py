@@ -15,7 +15,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from pmx.core.money import Probability, Usd, notional
+from pmx.core.money import Probability, Usd, capital_at_risk
 
 __all__ = [
     "Fill",
@@ -247,7 +247,9 @@ class ProposedOrder(Frozen):
 
     @model_validator(mode="after")
     def _cost_covers_notional(self) -> ProposedOrder:
-        floor = notional(self.limit_price, self.quantity)
+        floor = capital_at_risk(
+            self.limit_price, self.quantity, is_short=self.side is Side.SELL
+        )
         if self.max_cost < floor:
             raise ValueError(f"max_cost {self.max_cost} below notional {floor}")
         return self
@@ -276,4 +278,4 @@ class Position(Frozen):
     last_reconciled_at: datetime | None = None
 
     def cost_basis(self) -> Usd:
-        return notional(self.average_price, abs(self.quantity))
+        return capital_at_risk(self.average_price, abs(self.quantity), is_short=self.quantity < 0)

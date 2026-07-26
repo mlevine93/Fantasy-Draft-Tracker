@@ -15,6 +15,7 @@ from pmx.audit.ledger import EntryKind
 from pmx.core.models import (
     DepthLevel,
     PromotionState,
+    Quote,
     QuoteSource,
     Side,
     Signal,
@@ -559,3 +560,78 @@ class TestSellSide:
         assert decision.outcome is DecisionOutcome.APPROVED
         assert decision.order is not None
         assert decision.order.side is Side.SELL
+
+
+class TestShortRisk:
+    """Regression: exposure limits must be computed on maximum loss, not on proceeds.
+
+    Selling a contract at 0.10 collects $0.10 and can lose $0.90 — settlement pays the
+    holder $1 and we owe it. Booking the short at its proceeds understated risk by
+    (1-p)/p, a 9x error at 10 cents, on precisely the leg of the book where a strategy
+    is most tempted to sell.
+    """
+
+    def _short_signal(self, outcome, quote, price: str, thesis: str, quantity: int = 100):
+        return Signal(
+            signal_id="sig-short",
+            strategy="manual",
+            outcome=outcome,
+            side=Side.SELL,
+            thesis_price=Probability(thesis),
+            limit_price=Probability(price),
+            max_quantity=quantity,
+            rationale="Short risk regression.",
+            created_at=NOW,
+            quote=quote,
+        )
+
+    @pytest.fixture
+    def cheap_book(self, outcome):
+        return Quote(
+            outcome=outcome,
+            bid=Probability("0.10"),
+            ask=Probability("0.12"),
+            bid_depth=(DepthLevel(price=Probability("0.10"), quantity=5000),),
+            ask_depth=(DepthLevel(price=Probability("0.12"), quantity=5000),),
+            observed_at=NOW,
+            source=QuoteSource.BOOK,
+        )
+
+    def test_short_is_booked_at_maximum_loss_not_proceeds(
+        self, engine, market, snapshot, outcome, cheap_book
+    ):
+        sig = self._short_signal(outcome, cheap_book, price="0.10", thesis="0.02")
+        decision = evaluate(engine, sig, market, snapshot)
+        assert decision.outcome is DecisionOutcome.APPROVED
+        assert decision.order is not None
+        # 100 contracts sold at 0.10 risk $90, not $10.
+        assert decision.order.max_cost >= Usd("90")
+
+    def test_short_breaches_the_position_cap_that_proceeds_would_have_cleared(
+        self, engine, market, snapshot, outcome, cheap_book
+    ):
+        # $920 of existing exposure plus $90 of new risk breaches the $1000 cap.
+        # Booked at proceeds ($10) it would have passed with room to spare.
+        snap = snapshot.model_copy(
+            update={"deployed_by_outcome": {outcome.outcome_key: Usd("920")}}
+        )
+        sig = self._short_signal(outcome, cheap_book, price="0.10", thesis="0.02")
+        assert_rejected(evaluate(engine, sig, market, snap), Limit.MAX_POSITION_SIZE)
+
+    def test_short_sizing_divides_by_risk_not_by_price(self, outcome, cheap_book):
+        from pmx.risk.sizing import size_position
+
+        sizing = size_position(
+            thesis=Probability("0.02"),
+            price=Probability("0.10"),
+            side=Side.SELL,
+            bankroll=Usd("900"),
+            kelly_multiplier=Decimal("1"),
+            max_position_value=Usd("1000000"),
+            max_position_pct_of_bankroll=Decimal("1"),
+            signal_max_quantity=1_000_000,
+        )
+        # Full Kelly here is (0.10 - 0.02) / 0.10 = 0.8, so $720 of risk budget.
+        # At $0.90 of risk per contract that is 800 contracts, not the 7200 you get
+        # by dividing by the $0.10 price.
+        assert sizing.quantity == 800
