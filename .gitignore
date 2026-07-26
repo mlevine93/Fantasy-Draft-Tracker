@@ -1,0 +1,32 @@
+# Secrets — present from commit #1, non-negotiable (§1.1)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Runtime state — contains positions and account data
+*.db
+*.db-wal
+*.db-shm
+var/
+data/recorded/
+KILL
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

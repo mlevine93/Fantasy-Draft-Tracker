@@ -1,0 +1,77 @@
+[project]
+name = "pmx"
+version = "0.1.0"
+description = "Risk-constrained execution system for regulated prediction markets"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2,<3",
+    "pyyaml>=6,<7",
+    "typer>=0.12,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-cov>=6,<7",
+    "hypothesis>=6,<7",
+    "mypy>=1.11,<2",
+    "ruff>=0.6,<1",
+    "types-PyYAML",
+]
+
+[project.scripts]
+pmx = "pmx.ops.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pmx"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "PT", "SIM", "TID", "ARG", "PL", "RUF"]
+ignore = ["PLR0913", "N818"]  # N818: see per-file notes; RiskEngineFailure reads better than ...FailureError
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on literals, import inside functions to isolate fixtures, and take
+# fixture arguments they do not read. None of that is a defect in a test.
+"tests/*" = ["PLR2004", "S101", "PLC0415", "PT011", "PT018", "ARG001", "ARG002", "PLR0917", "RUF043"]
+# The risk engine's evaluate() is one long ordered sequence of guard clauses. Splitting
+# it to satisfy a branch-count metric would scatter the ordering that makes it correct —
+# the order of the checks IS the design (docs/spec.md).
+"pmx/risk/engine.py" = ["PLR0911", "PLR0912", "PLR0915"]
+# Domain exceptions are named for the event, not the suffix: KillSwitchEngaged reads
+# correctly at the raise site, KillSwitchEngagedError does not.
+"pmx/risk/circuit.py" = ["N818"]
+"pmx/venues/fees.py" = ["N818"]
+"pmx/audit/ledger.py" = ["PLR0917"]
+# The scanner's regexes are single-line by necessity.
+"scripts/secret_scan.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+disallow_any_explicit = false
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["pmx/risk", "pmx/audit", "pmx/core"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise AssertionError"]
