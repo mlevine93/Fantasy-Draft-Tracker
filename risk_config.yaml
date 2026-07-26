@@ -1,0 +1,90 @@
+# PMX risk limits.
+#
+# Every key here is required — there are no defaults in code. A missing key is a startup
+# failure, never an implicit "unlimited". Values below are Phase 0 settings: live trading
+# is off, both fee models are unverified, and the numbers are sized for the first live
+# phase (§7 Phase 3: "tiny limits"), not for a funded account.
+#
+# Changing anything in this file is a CONFIG_CHANGED entry in the audit ledger.
+
+# --- master switches ---------------------------------------------------------
+# §1.2: no order-placement path is reachable while this is false. It stays false
+# until Phase 3, and the CLI will refuse to flip it while any fee model is unverified.
+live_trading_enabled: false
+
+# §1.3: if this file exists, everything stops. No config can disable this check.
+kill_file: KILL
+
+# --- capital -----------------------------------------------------------------
+max_total_deployed: "500.00"
+max_venue_deployed:
+  kalshi: "400.00"
+  polymarket: "200.00"
+max_position_size: "50.00"
+max_position_pct_of_bankroll: "0.05"
+max_daily_new_capital: "150.00"
+min_cash_reserve: "100.00"
+
+# --- loss --------------------------------------------------------------------
+# Sticky: once tripped, a CLI command with an operator name and a note is the only
+# way back. Nothing here auto-resumes.
+daily_loss_halt: "50.00"
+max_drawdown_halt: "0.10"
+per_strategy_loss_halt: "25.00"
+
+# --- exposure ----------------------------------------------------------------
+# Correlated exposure aggregates by tag: ten markets on one event are one bet.
+# A market with no correlation tags is treated as correlated with its entire venue.
+max_correlated_exposure: "100.00"
+max_single_event_exposure: "100.00"
+max_illiquid_pct: "0.20"
+illiquid_volume_threshold: "10000.00"
+
+# --- execution ---------------------------------------------------------------
+max_order_size_pct_of_book: "0.25"
+max_slippage_bps: 100
+# The buffer a signal must clear *after* fees and spread. Deliberately wide while the
+# fee schedules are unverified (docs/api-notes.md §0).
+min_edge_bps_after_fees: 200
+max_orders_per_minute: 5
+max_orders_per_day: 50
+# No lottery tickets (15 minutes), no capital locked for a year (90 days).
+min_time_to_close_seconds: 900
+max_time_to_close_seconds: 7776000
+# Market orders require a per-signal override AND this flag. Both default off.
+allow_market_orders: false
+
+# --- data quality ------------------------------------------------------------
+max_quote_age_seconds: 10
+max_reconciliation_age_seconds: 120
+reconciliation_tolerance: "0.01"
+
+# --- approval ----------------------------------------------------------------
+# Phase 3 runs with this at zero: every order needs an explicit approval.
+auto_approve_threshold: "0.00"
+approval_expiry_seconds: 300
+# A price that moved more than 1 cent since approval is a new decision.
+approval_max_price_drift: "0.01"
+
+# --- sizing ------------------------------------------------------------------
+kelly_fraction: "0.25"
+
+# --- fees --------------------------------------------------------------------
+# verified: false makes the risk engine reject every signal on that venue. It stays
+# false until the schedule is read from primary documentation. See docs/api-notes.md §0.
+# Coefficients below are deliberate over-estimates, not published values.
+fee_models:
+  kalshi:
+    verified: false
+    source: "UNVERIFIED - third-party summary 2026-07-26, docs.kalshi.com unreachable"
+    taker_coefficient: "0.07"
+    maker_coefficient: "0.0175"
+    per_contract_cap: "0.035"
+    safety_multiplier: "1.5"
+  polymarket:
+    verified: false
+    source: "UNVERIFIED - CLOB V2 sets fees at match time; docs.polymarket.com unreachable"
+    taker_coefficient: "0.07"
+    maker_coefficient: "0.0175"
+    per_contract_cap: "0.035"
+    safety_multiplier: "1.5"
