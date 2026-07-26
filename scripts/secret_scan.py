@@ -25,7 +25,9 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("generic api secret assignment", re.compile(r"(?i)\b(api[_-]?secret|passphrase|mnemonic|seed[_-]?phrase)\b\s*[:=]\s*['\"][^'\"]{8,}")),
     ("AWS access key id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("Slack token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}")),
-    ("BIP39-looking mnemonic", re.compile(r"\b(?:[a-z]{3,8}\s+){11,}[a-z]{3,8}\b")),
+    # Quoted and single-spaced: a real mnemonic is a string literal, and matching bare
+    # runs of lowercase words flags ordinary English prose in every docstring.
+    ("BIP39-looking mnemonic", re.compile(r"['\"](?:[a-z]{3,8} ){11,23}[a-z]{3,8}['\"]")),
 ]
 
 # Files whose whole point is to describe secret *shapes*, not hold them.
