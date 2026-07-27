@@ -1,4 +1,4 @@
-# PMX — Operations (Phases 0–2)
+# PMX — Operations (Phases 0–2, plus the §6 gates)
 
 ## What exists
 
@@ -62,6 +62,8 @@ cp .env.example .env                      # gitignored; fill in when Phase 1 sta
 
 ```bash
 pmx config              # validate risk_config.yaml and print what is in force
+pmx strategies          # promotion state of every strategy
+pmx promote <name> --to paper|shadow|live --operator <you> --note "<why>" 
 pmx recover             # resolve orders in an unknown state — run first after a crash
 pmx digest              # daily digest, built from the audit ledger
 pmx heartbeat           # is the main loop alive?
@@ -74,6 +76,35 @@ pmx verify-ledger       # walk the hash chain end to end
 pmx kill                # create the KILL file — stops everything
 pmx kill --remove       # delete it
 ```
+
+## The promotion gate
+
+Nothing trades unless its promotion state is `LIVE`, and `LIVE` is only ever reached by
+someone typing the command. A strategy cannot go straight from `backtest` to `live` —
+§6 requires paper trading against live data in between, and that is precisely the step a
+deadline tempts you to skip, so the store refuses it:
+
+```
+$ pmx promote calibration --to live --operator mack --note "backtest looked great"
+calibration is backtest; a strategy may only go LIVE from ['paper', 'shadow'].
+§6 requires paper trading against live data before real capital.
+```
+
+Demotion is deliberately easy and needs no human: a loss halt calls `disable()` directly,
+because a system that waited for someone to switch off a losing strategy would keep
+trading while it waited.
+
+## Backtests are pessimistic on purpose
+
+`pmx/data/backtest.py` fills at the far side of the spread, caps size at the depth that
+was actually visible, allows partial fills, charges the real fee function including its
+round-up to the cent, and never lets a signal see a tick that came after it. It also
+refuses to invent settlement: without supplied resolutions, P&L is marked to the last
+observed price and the report says so.
+
+The two numbers to read first are **edge shortfall** (predicted edge minus realised edge
+— consistently positive means the strategy is overconfident) and **P&L excluding the top
+five trades** (§6: if it dies without them, it is a lottery, not an edge).
 
 ## The kill switch
 

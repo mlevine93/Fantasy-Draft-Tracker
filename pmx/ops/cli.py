@@ -21,7 +21,7 @@ import typer
 from pmx.audit.ledger import EntryKind, Ledger, LedgerIntegrityError
 from pmx.core.clock import Clock, StaleTimestampError, utc_now
 from pmx.core.ids import condition_id, token_id
-from pmx.core.models import OutcomeRef
+from pmx.core.models import OutcomeRef, PromotionState
 from pmx.core.money import Usd
 from pmx.data.recorder import TickRecorder
 from pmx.execution.store import OrderStore
@@ -30,6 +30,7 @@ from pmx.ops.reporting import build_digest, render_digest
 from pmx.risk.circuit import kill_switch_engaged
 from pmx.risk.limits import ConfigError, load_risk_config
 from pmx.risk.state import HaltStore
+from pmx.strategies.promotion import PromotionError, PromotionStore
 from pmx.venues.base import MarketDataVenue, VenueError
 from pmx.venues.kalshi import PROD_BASE_URL, KalshiMarketData
 from pmx.venues.polymarket import CLOB_BASE_URL, PolymarketMarketData
@@ -323,6 +324,58 @@ def heartbeat(path: str = "var/heartbeat", max_silence_seconds: int = 300) -> No
     typer.secho(status.detail, fg=colour)
     if not status.alive:
         raise typer.Exit(code=1)
+
+
+
+@app.command()
+def strategies(db: str = DEFAULT_DB) -> None:
+    """Show each strategy's promotion state. Only LIVE strategies can trade."""
+    with PromotionStore(db) as store:
+        states = store.all_states()
+    if not states:
+        typer.echo("no strategies registered — nothing can trade")
+        return
+    for name, state in sorted(states.items()):
+        colour = typer.colors.GREEN if state is PromotionState.LIVE else typer.colors.WHITE
+        typer.secho(f"{name:<20} {state}", fg=colour)
+
+
+@app.command()
+def promote(
+    strategy: str,
+    to: str = typer.Option(..., help="backtest | paper | shadow | live | disabled"),
+    operator: str = typer.Option(..., help="Who is making this call"),
+    note: str = typer.Option(..., help="Why this strategy has earned the change"),
+    db: str = DEFAULT_DB,
+) -> None:
+    """Change a strategy's promotion state. Promotion to LIVE is only ever manual (§6).
+
+    A strategy cannot jump straight from backtest to live: §6 requires paper trading
+    against live data in between, and that is the step a deadline tempts you to skip.
+    """
+    try:
+        target = PromotionState(to.lower())
+    except ValueError:
+        _fail(f"unknown promotion state {to!r}")
+        return
+
+    audit_path = Path(db.replace(".db", "-audit.db"))
+    with PromotionStore(db) as store, Ledger(audit_path) as ledger:
+        try:
+            record = store.set_state(
+                strategy, target, operator=operator, note=note, ledger=ledger
+            )
+        except PromotionError as exc:
+            _fail(str(exc))
+            return
+
+    colour = typer.colors.RED if target is PromotionState.LIVE else typer.colors.YELLOW
+    typer.secho(f"{record.strategy} -> {record.state} by {record.operator}", fg=colour)
+    if target is PromotionState.LIVE:
+        typer.secho(
+            "this strategy can now spend real money, subject to every risk limit",
+            fg=typer.colors.RED,
+        )
 
 
 if __name__ == "__main__":
