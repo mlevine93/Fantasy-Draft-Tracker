@@ -1,14 +1,32 @@
-# PMX — Operations (Phases 0–1)
+# PMX — Operations (Phases 0–2)
 
 ## What exists
 
 Phase 0: the risk engine and everything it needs, plus the audit ledger and the operator
 CLI. Phase 1: read-only venue clients for Kalshi and Polymarket, the HTTP transport with
 its rate limiter and retry policy, the canonical normalizer, and the tick recorder.
+Phase 2: the execution router, the persistent order store, crash recovery, the
+reconciler, the strategy interface, and the `manual` strategy.
 
-Still absent: `pmx/execution/` and `pmx/strategies/`. Nothing in the tree can place an
-order, and the AST test in `tests/test_single_order_path.py` already enforces the rules
-those packages will have to follow.
+The full path now exists end to end: operator thesis → `Signal` → risk engine →
+`ProposedOrder` → router → venue. It has been exercised against a local fake venue that
+injects the failures that actually cost money — a timeout after the venue accepted the
+order, a crash between writing intent and reading the response, a position book that
+disagrees with ours.
+
+What does **not** exist: a `TradingVenue` implementation for either real venue. The
+router is complete and the interface is fixed, but Kalshi and Polymarket order signing is
+the remaining code, and it needs credentials and network access that this environment
+does not have.
+
+### The three rules Phase 2 is built around
+
+1. **Intent hits disk before the wire.** A crash after that leaves a row recovery can
+   resolve; a crash before it means no order was sent.
+2. **A timeout is not a rejection.** An ambiguous failure marks the order `UNKNOWN` and
+   raises. Recovery asks the venue. Nothing is ever retried blind.
+3. **The idempotency key is the primary key.** A second attempt at the same order is a
+   database integrity error, not a second position.
 
 ### Phase 1 caveat — response schemas are unverified
 
@@ -85,9 +103,12 @@ defensive branch no input can reach looks like a safety check while being dead c
 | Strategy promotion | nothing is `LIVE`; no strategies exist yet |
 | Reconciliation | never run; the engine rejects on that alone |
 | Venue response schemas | unverified; both clients `SCHEMA_VERIFIED = False` |
+| Trading venue clients | not implemented — no `TradingVenue` subclass exists for either venue |
+| Credentials | none present; `.env` is empty |
+| Network egress to venues | blocked by environment policy (403 at the proxy) |
 
-Four independent gates currently block every order. That is the intended Phase 0 state:
-the engine is complete and the system is provably incapable of trading.
+Every one of these independently blocks an order. The system is complete through the
+router and provably incapable of trading.
 
 ## Before Phase 3 (live capital)
 
