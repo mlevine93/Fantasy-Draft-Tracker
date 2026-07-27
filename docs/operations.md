@@ -1,11 +1,31 @@
-# PMX — Operations (Phase 0)
+# PMX — Operations (Phases 0–1)
 
 ## What exists
 
-The risk engine and everything it needs, plus the audit ledger and the operator CLI.
-No venue clients, no network calls, no code that can place an order. `pmx/execution/`
-and `pmx/strategies/` do not exist yet; the AST test in
-`tests/test_single_order_path.py` already enforces the rules they will have to follow.
+Phase 0: the risk engine and everything it needs, plus the audit ledger and the operator
+CLI. Phase 1: read-only venue clients for Kalshi and Polymarket, the HTTP transport with
+its rate limiter and retry policy, the canonical normalizer, and the tick recorder.
+
+Still absent: `pmx/execution/` and `pmx/strategies/`. Nothing in the tree can place an
+order, and the AST test in `tests/test_single_order_path.py` already enforces the rules
+those packages will have to follow.
+
+### Phase 1 caveat — response schemas are unverified
+
+The venue documentation hosts are unreachable from this environment
+(docs/api-notes.md §0), so the *response* shapes in `pmx/venues/` were written from SDK
+source plus inference. Both clients carry `SCHEMA_VERIFIED = False`.
+
+Three things make that survivable rather than dangerous:
+
+1. Parsing is strict. A missing or unexpected field raises `VenueDataError` instead of
+   defaulting, so a wrong guess fails on first contact.
+2. The recorder stores the venue's raw payload beside every parsed row, so a schema
+   correction is a reparse rather than a lost archive.
+3. Nothing in Phase 1 touches money. A schema error here costs data quality, not capital.
+
+Kalshi's *authentication* is a different matter: it is verified against Kalshi's own
+published code and covered by a test that checks a real RSA-PSS signature.
 
 ## Setup
 
@@ -20,6 +40,8 @@ cp .env.example .env                      # gitignored; fill in when Phase 1 sta
 
 ```bash
 pmx config              # validate risk_config.yaml and print what is in force
+pmx skew --venue kalshi # measure clock skew (check this first on any 401)
+pmx record --venue kalshi --market <ticker> --side YES --seconds 3600
 pmx halts               # active halts
 pmx halts --history     # every halt ever tripped, and who cleared it
 pmx clear-halt <id> --operator <name> --note "<why it is safe>"
@@ -62,6 +84,7 @@ defensive branch no input can reach looks like a safety check while being dead c
 | Polymarket fee model | **unverified** — every Polymarket signal is hard-rejected |
 | Strategy promotion | nothing is `LIVE`; no strategies exist yet |
 | Reconciliation | never run; the engine rejects on that alone |
+| Venue response schemas | unverified; both clients `SCHEMA_VERIFIED = False` |
 
 Four independent gates currently block every order. That is the intended Phase 0 state:
 the engine is complete and the system is provably incapable of trading.

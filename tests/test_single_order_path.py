@@ -103,10 +103,19 @@ def test_no_bare_except_in_risk_or_execution() -> None:
 def test_no_float_literals_in_money_paths() -> None:
     """A float literal in risk or venue code is how binary rounding gets into money.
 
-    `pmx/core/money.py` is exempt only because it is the module that rejects floats,
-    and `pmx/risk/limits.py` because it converts YAML floats to Decimal via str.
+    Four modules are exempt, each for a stated reason:
+      - `pmx/core/money.py` is the module that rejects floats.
+      - `pmx/risk/limits.py` converts YAML floats to Decimal via str.
+      - `pmx/venues/transport.py` and `pmx/venues/rate_limits.py` deal only in seconds
+        and token counts. They are quarantined into their own modules precisely so this
+        rule can stay strict everywhere a price is parsed.
     """
-    exempt = {"pmx/core/money.py", "pmx/risk/limits.py"}
+    exempt = {
+        "pmx/core/money.py",
+        "pmx/risk/limits.py",
+        "pmx/venues/transport.py",
+        "pmx/venues/rate_limits.py",
+    }
     offenders: list[str] = []
     for path in python_files():
         rel = relative(path)

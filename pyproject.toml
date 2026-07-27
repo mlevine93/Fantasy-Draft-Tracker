@@ -7,6 +7,10 @@ dependencies = [
     "pydantic>=2,<3",
     "pyyaml>=6,<7",
     "typer>=0.12,<1",
+    "httpx>=0.27,<1",
+    "websockets>=13,<16",
+    "cryptography>=43,<47",
+    "pyarrow>=15,<22",
 ]
 
 [project.optional-dependencies]
@@ -50,6 +54,9 @@ ignore = ["PLR0913", "N818"]  # N818: see per-file notes; RiskEngineFailure read
 "pmx/risk/circuit.py" = ["N818"]
 "pmx/venues/fees.py" = ["N818"]
 "pmx/audit/ledger.py" = ["PLR0917"]
+# Typer builds the CLI signature from parameters; each one is a flag, not an argument
+# a human passes positionally.
+"pmx/ops/cli.py" = ["PLR0917"]
 # The scanner's regexes are single-line by necessity.
 "scripts/secret_scan.py" = ["E501"]
 
@@ -63,6 +70,12 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+# pyarrow ships no type stubs. Scoped to the import itself so the recorder's own
+# annotations are still checked strictly.
+[[tool.mypy.overrides]]
+module = ["pyarrow.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

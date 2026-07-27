@@ -12,14 +12,22 @@ is exactly the decision that should be on the record.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import typer
 
 from pmx.audit.ledger import EntryKind, Ledger, LedgerIntegrityError
+from pmx.core.clock import Clock, StaleTimestampError
+from pmx.core.ids import condition_id, token_id
+from pmx.core.models import OutcomeRef
+from pmx.data.recorder import TickRecorder
 from pmx.risk.circuit import kill_switch_engaged
 from pmx.risk.limits import ConfigError, load_risk_config
 from pmx.risk.state import HaltStore
+from pmx.venues.base import MarketDataVenue, VenueError
+from pmx.venues.kalshi import PROD_BASE_URL, KalshiMarketData
+from pmx.venues.polymarket import CLOB_BASE_URL, PolymarketMarketData
 
 app = typer.Typer(add_completion=False, help="PMX operator CLI")
 
@@ -142,6 +150,98 @@ def kill(path: str = "KILL", remove: bool = False) -> None:
         return
     target.write_text("engaged by pmx kill\n")
     typer.secho(f"KILL SWITCH ENGAGED ({path} created)", fg=typer.colors.RED)
+
+
+
+@app.command()
+def skew(venue: str = "kalshi", base_url: str = "") -> None:
+    """Measure clock skew against a venue.
+
+    Worth having its own command: both venues reject signatures whose timestamp has
+    drifted, and the resulting 401 is indistinguishable from a bad credential. Checking
+    skew first turns a confusing outage into a one-line diagnosis.
+    """
+    client = _market_data_client(venue, base_url)
+    try:
+        venue_time = client.server_time()
+    finally:
+        client.close()
+
+    clock = Clock()
+    try:
+        measured = clock.observe_venue_time(venue, venue_time)
+    except StaleTimestampError as exc:
+        _fail(str(exc))
+        return
+    typer.echo(f"{venue} clock: {venue_time.isoformat()}")
+    typer.secho(f"skew: {measured.total_seconds():+.3f}s", fg=typer.colors.GREEN)
+
+
+@app.command()
+def record(
+    venue: str = "kalshi",
+    market: str = typer.Option(..., help="Venue-native market key"),
+    side: str = typer.Option("YES", help="Kalshi only: YES or NO"),
+    seconds: int = typer.Option(60, help="How long to record"),
+    interval: float = typer.Option(5.0, help="Seconds between polls"),
+    out: str = "data/recorded",
+    base_url: str = "",
+) -> None:
+    """Poll one market's book and append ticks to the parquet archive.
+
+    Every day without recording is a day of backtest data that cannot be recovered, so
+    this exists before any strategy needs it. Raw payloads are stored beside the parsed
+    rows — the response schemas are unverified (docs/api-notes.md §0), and the raw bytes
+    are what make a schema correction a reparse instead of a loss.
+    """
+    client = _market_data_client(venue, base_url)
+    outcome = _outcome_ref(venue, client, market, side)
+
+    deadline = time.monotonic() + seconds
+    ticks = 0
+    errors = 0
+    try:
+        with TickRecorder(out) as recorder:
+            while time.monotonic() < deadline:
+                if kill_switch_engaged("KILL"):
+                    typer.secho("KILL file present: stopping", fg=typer.colors.RED, err=True)
+                    raise typer.Exit(code=1)
+                try:
+                    quote = client.get_quote(outcome)
+                except VenueError as exc:
+                    # A read failure is not a reason to abandon the session, but it is
+                    # never silent: recording gaps have to be visible in the summary.
+                    errors += 1
+                    typer.secho(f"read failed: {exc}", fg=typer.colors.YELLOW, err=True)
+                else:
+                    recorder.record(quote)
+                    ticks += 1
+                time.sleep(interval)
+    finally:
+        client.close()
+
+    colour = typer.colors.GREEN if errors == 0 else typer.colors.YELLOW
+    typer.secho(f"recorded {ticks} ticks ({errors} failed reads) to {out}", fg=colour)
+
+
+def _market_data_client(venue: str, base_url: str) -> MarketDataVenue:
+    if venue == "kalshi":
+        return KalshiMarketData.public(base_url or PROD_BASE_URL)
+    if venue == "polymarket":
+        return PolymarketMarketData.public(base_url or CLOB_BASE_URL)
+    _fail(f"unknown venue {venue!r}; expected 'kalshi' or 'polymarket'")
+    raise AssertionError("unreachable")
+
+
+def _outcome_ref(venue: str, client: MarketDataVenue, market: str, side: str) -> OutcomeRef:
+    """Build the outcome reference, taking the event key from the venue rather than
+    inventing one: an event key we made up would not aggregate correlated exposure."""
+    resolved = client.get_market(market)
+    if venue == "kalshi":
+        return KalshiMarketData.outcome_ref(market, resolved.event_key, side)
+    return PolymarketMarketData.outcome_ref(
+        condition_id(market), token_id(side), resolved.event_key
+    )
 
 
 if __name__ == "__main__":

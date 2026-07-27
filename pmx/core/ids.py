@@ -70,15 +70,26 @@ def condition_id(value: str) -> ConditionId:
 def token_id(value: str) -> TokenId:
     """Parse a Polymarket token ID at the JSON boundary.
 
-    Token IDs are decimal uint256 strings in some responses and hex in others; accept
-    either, but never accept something that is merely "a string we got from JSON".
+    **Decimal digits only, and 0x-hex is rejected on purpose.** Token IDs appear as
+    decimal uint256 strings in CLOB responses while condition IDs are 0x-prefixed hex of
+    exactly 66 characters. Accepting both formats here would make the two types
+    indistinguishable at runtime — and the whole reason they are separate types is to
+    catch the swap. Narrowing the accepted format converts "silently query the wrong
+    market" into "raise at the boundary".
+
+    If a Polymarket endpoint is ever found to return hex token IDs, this must be widened
+    *and* a different discriminator found — not widened alone.
     """
     if not isinstance(value, str):
         raise IdFormatError(f"TokenId must be a string, got {type(value).__name__}")
     if not value:
         raise IdFormatError("TokenId must not be empty")
     if value.startswith("0x"):
-        return TokenId(_check_hex(value, kind="TokenId"))
+        raise IdFormatError(
+            f"TokenId must be decimal digits, got 0x-hex {value[:12]}...: this looks like "
+            "a ConditionId, which names a market rather than an outcome and is not a "
+            "valid order target"
+        )
     if not value.isdigit():
-        raise IdFormatError(f"TokenId must be decimal digits or 0x-hex, got {value!r}")
+        raise IdFormatError(f"TokenId must be decimal digits, got {value!r}")
     return TokenId(value)
