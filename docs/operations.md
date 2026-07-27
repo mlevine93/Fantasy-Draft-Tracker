@@ -14,10 +14,14 @@ injects the failures that actually cost money — a timeout after the venue acce
 order, a crash between writing intent and reading the response, a position book that
 disagrees with ours.
 
-What does **not** exist: a `TradingVenue` implementation for either real venue. The
-router is complete and the interface is fixed, but Kalshi and Polymarket order signing is
-the remaining code, and it needs credentials and network access that this environment
-does not have.
+Kalshi's authenticated trading client now exists too — order placement, cancellation,
+order lookup by our own idempotency key, positions and balance — plus the daily digest
+and the heartbeat.
+
+What does **not** exist: a Polymarket trading client (L1/L2 order signing), and any
+verification of the Kalshi order payload. `pmx/venues/kalshi_trading.py` carries
+`SCHEMA_VERIFIED = False` and a `require_verified_schema()` startup check that refuses to
+come up live until one real demo order has confirmed the shapes.
 
 ### The three rules Phase 2 is built around
 
@@ -58,6 +62,9 @@ cp .env.example .env                      # gitignored; fill in when Phase 1 sta
 
 ```bash
 pmx config              # validate risk_config.yaml and print what is in force
+pmx recover             # resolve orders in an unknown state — run first after a crash
+pmx digest              # daily digest, built from the audit ledger
+pmx heartbeat           # is the main loop alive?
 pmx skew --venue kalshi # measure clock skew (check this first on any 401)
 pmx record --venue kalshi --market <ticker> --side YES --seconds 3600
 pmx halts               # active halts
@@ -103,7 +110,8 @@ defensive branch no input can reach looks like a safety check while being dead c
 | Strategy promotion | nothing is `LIVE`; no strategies exist yet |
 | Reconciliation | never run; the engine rejects on that alone |
 | Venue response schemas | unverified; both clients `SCHEMA_VERIFIED = False` |
-| Trading venue clients | not implemented — no `TradingVenue` subclass exists for either venue |
+| Kalshi order schema | unverified — `require_verified_schema()` blocks live startup |
+| Polymarket trading client | not implemented (L1/L2 order signing) |
 | Credentials | none present; `.env` is empty |
 | Network egress to venues | blocked by environment policy (403 at the proxy) |
 

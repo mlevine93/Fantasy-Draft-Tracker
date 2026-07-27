@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any
 
-from pmx.core.models import Market, OutcomeRef, Quote, Venue
+from pmx.core.models import Market, OutcomeRef, ProposedOrder, Quote, Venue
 from pmx.core.money import Usd
 
 __all__ = [
@@ -101,17 +102,21 @@ class TradingVenue(MarketDataVenue):
         """Settled cash at the venue, per the venue, not per our books."""
 
     @abstractmethod
-    def place_order(self, *args: object, **kwargs: object) -> object:
-        """Submit an order. Router only, always with an idempotency key."""
+    def place_order(self, order: ProposedOrder) -> str:
+        """Submit an order and return the venue's id for it. Router only.
+
+        The order's idempotency key must travel to the venue: it is how recovery finds
+        out whether an order exists when the response was lost.
+        """
 
     @abstractmethod
-    def cancel_order(self, *args: object, **kwargs: object) -> object:
+    def cancel_order(self, order_id: str) -> None:
         """Cancel an order. Router only."""
 
     @abstractmethod
-    def open_orders(self) -> list[object]:
+    def open_orders(self) -> list[Any]:
         """Live orders per the venue. The reconciler's source of truth."""
 
     @abstractmethod
-    def positions(self) -> list[object]:
+    def positions(self) -> list[Any]:
         """Positions per the venue. The reconciler's source of truth."""

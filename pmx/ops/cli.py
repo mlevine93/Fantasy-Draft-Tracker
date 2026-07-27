@@ -13,15 +13,20 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import typer
 
 from pmx.audit.ledger import EntryKind, Ledger, LedgerIntegrityError
-from pmx.core.clock import Clock, StaleTimestampError
+from pmx.core.clock import Clock, StaleTimestampError, utc_now
 from pmx.core.ids import condition_id, token_id
 from pmx.core.models import OutcomeRef
+from pmx.core.money import Usd
 from pmx.data.recorder import TickRecorder
+from pmx.execution.store import OrderStore
+from pmx.ops.heartbeat import Heartbeat
+from pmx.ops.reporting import build_digest, render_digest
 from pmx.risk.circuit import kill_switch_engaged
 from pmx.risk.limits import ConfigError, load_risk_config
 from pmx.risk.state import HaltStore
@@ -242,6 +247,82 @@ def _outcome_ref(venue: str, client: MarketDataVenue, market: str, side: str) ->
     return PolymarketMarketData.outcome_ref(
         condition_id(market), token_id(side), resolved.event_key
     )
+
+
+
+@app.command()
+def digest(
+    day: str = "",
+    db: str = DEFAULT_DB,
+    equity: str = "0",
+    day_pnl: str = "0",
+) -> None:
+    """Print the daily digest, built from the audit ledger.
+
+    Equity and P&L are supplied by the caller for now: position marking arrives with the
+    portfolio tracker in Phase 3. Everything else — order counts, rejection reasons,
+    halts, reconciliation status, ledger integrity — comes from the ledger, which is the
+    record of what actually happened rather than what the running process believes.
+    """
+    audit_path = Path(db.replace(".db", "-audit.db"))
+    if not audit_path.exists():
+        _fail(f"no audit ledger at {audit_path}")
+    target = date.fromisoformat(day) if day else utc_now().date()
+    with Ledger(audit_path) as ledger:
+        report = build_digest(
+            ledger, target, equity=Usd(equity), day_pnl=Usd(day_pnl)
+        )
+    typer.echo(render_digest(report))
+    if not report.ledger_verified:
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def recover(db: str = DEFAULT_DB) -> None:
+    """Resolve every order whose state we do not know, against the venue.
+
+    Run this before anything else after a crash. Until it reports safe, no order should
+    be placed: an unresolved order means our position state is a guess, and every risk
+    limit is computed from position state.
+    """
+    audit_path = Path(db.replace(".db", "-audit.db"))
+    with OrderStore(db) as store, Ledger(audit_path) as ledger:
+        pending = store.unresolved()
+        if not pending:
+            typer.secho("nothing to recover", fg=typer.colors.GREEN)
+            return
+        typer.echo(f"{len(pending)} order(s) in an unresolved state")
+        # No venue clients are wired here yet: resolving requires authenticated trading
+        # clients, which arrive with credentials. Listing them is still useful — it tells
+        # the operator exactly what is outstanding before anything restarts.
+        for record in pending:
+            typer.secho(
+                f"  {record.idempotency_key} {record.state} {record.venue} "
+                f"{record.outcome_key} {record.quantity}@{record.limit_price}",
+                fg=typer.colors.YELLOW,
+            )
+        ledger.append(
+            EntryKind.RECONCILIATION,
+            {"phase": "recover_cli", "unresolved": len(pending)},
+        )
+        typer.secho(
+            "\nresolve these against the venue before trading resumes", fg=typer.colors.RED
+        )
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def heartbeat(path: str = "var/heartbeat", max_silence_seconds: int = 300) -> None:
+    """Report whether the main loop is alive.
+
+    A silently dead bot with open positions is worse than no bot: it has stopped
+    trading, but it has also stopped cancelling, reconciling, and noticing.
+    """
+    status = Heartbeat(path, max_silence=timedelta(seconds=max_silence_seconds)).status()
+    colour = typer.colors.GREEN if status.alive else typer.colors.RED
+    typer.secho(status.detail, fg=colour)
+    if not status.alive:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
